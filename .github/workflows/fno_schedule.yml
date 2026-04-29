@@ -2,7 +2,8 @@ name: FnO Alert
 
 on:
   schedule:
-    - cron: '55 3 * * 1-5'
+    - cron: '55 3 * * 1-5'   # 9:25 AM IST - scheduled alert
+    - cron: '*/1 3-10 * * 1-5'  # Every 1 min (3AM-10AM UTC) to listen for commands
   workflow_dispatch:
 
 jobs:
@@ -16,5 +17,12 @@ jobs:
           python-version: '3.11'
       - name: Install dependencies
         run: pip install requests
-      - name: Run FnO Alert
-        run: python fnoalerts.py
+      - name: Run Scheduled Alert or Listen
+        run: |
+          HOUR=$(date -u +%H)
+          MIN=$(date -u +%M)
+          if [ "$HOUR" = "03" ] && [ "$MIN" = "55" ]; then
+            python fnoalerts.py scheduled
+          else
+            python fnoalerts.py listen
+          fi
