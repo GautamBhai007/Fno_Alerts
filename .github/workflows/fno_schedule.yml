@@ -2,9 +2,9 @@ name: FnO Alert
 
 on:
   schedule:
-    - cron: '55 3 * * 1-5'    # 9:25 AM IST auto alert
-    - cron: '*/2 * * * 1-5'   # Every 2 mins on weekdays to check /fno command
-  workflow_dispatch:
+    - cron: '55 3 * * 1-5'   # 9:25 AM IST auto alert
+    - cron: '*/2 * * * 1-5'  # Every 2 mins on weekdays - listen for /fno
+  workflow_dispatch:          # Manual trigger - also listens for /fno
 
 jobs:
   send-alert:
@@ -25,4 +25,5 @@ jobs:
             python fnoalerts.py scheduled
           else
             python fnoalerts.py listen
+          fi
           fi
