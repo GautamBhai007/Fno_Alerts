@@ -1,0 +1,20 @@
+name: FnO Alert
+
+on:
+  schedule:
+    - cron: '55 3 * * 1-5'
+  workflow_dispatch:
+
+jobs:
+  send-alert:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: pip install requests
+      - name: Run FnO Alert
+        run: python fnoalerts.py
