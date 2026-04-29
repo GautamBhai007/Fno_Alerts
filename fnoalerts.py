@@ -1,5 +1,6 @@
 import requests
 import datetime
+import time
 
 BOT_TOKEN = "8613392574:AAF83_86w1TGHdYuZF5ZXjwQPJQD8ss7fCM"
 CHAT_ID = "7084342720"
@@ -43,31 +44,7 @@ FNO_SYMBOLS = [
     "NUVAMA"
 ]
 
-def get_quote(symbol, session):
-    try:
-        url = f"https://www.nseindia.com/api/quote-equity?symbol={symbol}"
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-            "Accept": "application/json",
-            "Referer": "https://www.nseindia.com"
-        }
-        r = session.get(url, headers=headers, timeout=10)
-        data = r.json()
-        ltp = data["priceInfo"]["lastPrice"]
-        change_pct = data["priceInfo"]["pChange"]
-        return ltp, change_pct
-    except:
-        return None, None
-
-def send_telegram(message):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    requests.post(url, data={
-        "chat_id": CHAT_ID,
-        "text": message,
-        "parse_mode": "Markdown"
-    })
-
-def main():
+def get_fno_movers():
     session = requests.Session()
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
@@ -78,39 +55,104 @@ def main():
     gainers, losers = [], []
 
     for symbol in FNO_SYMBOLS:
-        ltp, change_pct = get_quote(symbol, session)
-        if ltp is None:
+        try:
+            url = f"https://www.nseindia.com/api/quote-equity?symbol={symbol}"
+            r = session.get(url, headers={**headers, "Accept": "application/json"}, timeout=10)
+            data = r.json()
+            ltp = data["priceInfo"]["lastPrice"]
+            change_pct = data["priceInfo"]["pChange"]
+            if 0 < change_pct < 3:
+                gainers.append((symbol, ltp, change_pct))
+            elif -3 < change_pct < 0:
+                losers.append((symbol, ltp, change_pct))
+        except:
             continue
-        if 0 < change_pct < 3:
-            gainers.append((symbol, ltp, change_pct))
-        elif -3 < change_pct < 0:
-            losers.append((symbol, ltp, change_pct))
 
     gainers.sort(key=lambda x: x[2], reverse=True)
     losers.sort(key=lambda x: x[2])
 
-    now = datetime.datetime.now().strftime("%d %b %Y, %I:%M %p")
+    gainers = gainers[:5]
+    losers = losers[:5]
 
+    return gainers, losers
+
+def build_message(gainers, losers):
+    now = datetime.datetime.now().strftime("%d %b %Y, %I:%M %p")
     g_lines = "\n".join([f"  {s}: ₹{l} (+{c:.2f}%)" for s, l, c in gainers]) or "  None"
     l_lines = "\n".join([f"  {s}: ₹{l} ({c:.2f}%)" for s, l, c in losers]) or "  None"
-
-    full_msg = (
-        f"📊 *FnO Movers — {now}*\n"
+    return (
+        f"📊 *FnO Top 5 Movers — {now}*\n"
         f"_(Stocks with 0–3% move only)_\n\n"
-        f"✅ *Gainers ({len(gainers)}):*\n{g_lines}\n\n"
-        f"🔴 *Losers ({len(losers)}):*\n{l_lines}"
+        f"✅ *Top 5 Gainers:*\n{g_lines}\n\n"
+        f"🔴 *Top 5 Losers:*\n{l_lines}"
     )
 
-    if len(full_msg) > 4000:
-        send_telegram(f"📊 *FnO Gainers — {now}*\n✅ *({len(gainers)}):*\n{g_lines}")
-        send_telegram(f"📊 *FnO Losers — {now}*\n🔴 *({len(losers)}):*\n{l_lines}")
-    else:
-        send_telegram(full_msg)
+def send_telegram(message):
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    requests.post(url, data={
+        "chat_id": CHAT_ID,
+        "text": message,
+        "parse_mode": "Markdown"
+    })
 
-    print(f"Done! Gainers: {len(gainers)}, Losers: {len(losers)}")
+def get_last_update_id():
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates?limit=1&offset=-1"
+    r = requests.get(url)
+    data = r.json()
+    if data["result"]:
+        return data["result"][-1]["update_id"]
+    return None
+
+def listen_for_commands():
+    """Listen for /fno command for 55 seconds and respond"""
+    print("Listening for /fno commands for 55 seconds...")
+    seen_ids = set()
+
+    # Get current update_id to ignore old messages
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates?limit=5&offset=-5"
+    r = requests.get(url)
+    data = r.json()
+    for item in data.get("result", []):
+        seen_ids.add(item["update_id"])
+
+    start = time.time()
+    while time.time() - start < 55:
+        try:
+            url = f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates?timeout=10"
+            r = requests.get(url, timeout=15)
+            updates = r.json().get("result", [])
+            for update in updates:
+                uid = update["update_id"]
+                if uid in seen_ids:
+                    continue
+                seen_ids.add(uid)
+                text = update.get("message", {}).get("text", "")
+                chat_id = update.get("message", {}).get("chat", {}).get("id")
+                if text.strip().lower() in ["/fno", "/fno@" + BOT_TOKEN.split(":")[0]]:
+                    print(f"Got /fno command from {chat_id}")
+                    send_telegram("⏳ Fetching FnO data, please wait...")
+                    gainers, losers = get_fno_movers()
+                    msg = build_message(gainers, losers)
+                    send_telegram(msg)
+        except:
+            pass
+        time.sleep(3)
+
+import sys
 
 if __name__ == "__main__":
-    if datetime.datetime.today().weekday() < 5:
-        main()
-    else:
-        print("Weekend — skipping.")
+    mode = sys.argv[1] if len(sys.argv) > 1 else "scheduled"
+
+    if mode == "scheduled":
+        # Auto alert at 9:25 AM
+        if datetime.datetime.today().weekday() < 5:
+            gainers, losers = get_fno_movers()
+            msg = build_message(gainers, losers)
+            send_telegram(msg)
+            print("Scheduled alert sent!")
+        else:
+            print("Weekend — skipping.")
+
+    elif mode == "listen":
+        # Listen for /fno commands
+        listen_for_commands()
