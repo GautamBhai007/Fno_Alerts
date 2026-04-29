@@ -87,26 +87,24 @@ def send_message(chat_id, message):
     requests.post(url, data={"chat_id": chat_id, "text": message, "parse_mode": "Markdown"})
 
 def check_fno_command():
-    """Check if /fno was sent in last 2 minutes"""
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates?limit=10"
+    """Check latest message - if it is /fno then respond"""
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates?limit=1&offset=-1"
     r = requests.get(url, timeout=10)
     updates = r.json().get("result", [])
 
-    now = datetime.datetime.utcnow()
     for update in updates:
         msg = update.get("message", {})
         text = msg.get("text", "").strip().lower()
         chat_id = msg.get("chat", {}).get("id")
-        msg_time = msg.get("date", 0)
-        msg_dt = datetime.datetime.utcfromtimestamp(msg_time)
 
-        # Only respond to messages sent in last 2 minutes
-        if text == "/fno" and (now - msg_dt).seconds < 120:
+        if text == "/fno":
             print(f"Found /fno command from {chat_id}")
             send_message(chat_id, "⏳ Fetching FnO data, please wait...")
             gainers, losers = get_fno_movers()
             send_message(chat_id, build_message(gainers, losers))
             return True
+        else:
+            print(f"Last message was: {text} — not /fno")
     return False
 
 import sys
