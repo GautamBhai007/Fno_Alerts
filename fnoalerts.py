@@ -1,6 +1,5 @@
 import requests
 import datetime
-import time
 
 BOT_TOKEN = "8613392574:AAF83_86w1TGHdYuZF5ZXjwQPJQD8ss7fCM"
 CHAT_ID = "7084342720"
@@ -53,7 +52,6 @@ def get_fno_movers():
     session.get("https://www.nseindia.com", headers=headers, timeout=10)
 
     gainers, losers = [], []
-
     for symbol in FNO_SYMBOLS:
         try:
             url = f"https://www.nseindia.com/api/quote-equity?symbol={symbol}"
@@ -70,73 +68,46 @@ def get_fno_movers():
 
     gainers.sort(key=lambda x: x[2], reverse=True)
     losers.sort(key=lambda x: x[2])
-
-    gainers = gainers[:5]
-    losers = losers[:5]
-
-    return gainers, losers
+    return gainers[:5], losers[:5]
 
 def build_message(gainers, losers):
-    now = datetime.datetime.now().strftime("%d %b %Y, %I:%M %p")
+    IST = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
+    now = datetime.datetime.now(IST).strftime("%d %b %Y, %I:%M %p")
     g_lines = "\n".join([f"  {s}: ₹{l} (+{c:.2f}%)" for s, l, c in gainers]) or "  None"
     l_lines = "\n".join([f"  {s}: ₹{l} ({c:.2f}%)" for s, l, c in losers]) or "  None"
     return (
-        f"📊 *FnO Top 5 Movers — {now}*\n"
+        f"📊 *FnO Top 5 Movers — {now} IST*\n"
         f"_(Stocks with 0–3% move only)_\n\n"
         f"✅ *Top 5 Gainers:*\n{g_lines}\n\n"
         f"🔴 *Top 5 Losers:*\n{l_lines}"
     )
 
-def send_telegram(message):
+def send_message(chat_id, message):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    requests.post(url, data={
-        "chat_id": CHAT_ID,
-        "text": message,
-        "parse_mode": "Markdown"
-    })
+    requests.post(url, data={"chat_id": chat_id, "text": message, "parse_mode": "Markdown"})
 
-def get_last_update_id():
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates?limit=1&offset=-1"
-    r = requests.get(url)
-    data = r.json()
-    if data["result"]:
-        return data["result"][-1]["update_id"]
-    return None
+def check_fno_command():
+    """Check if /fno was sent in last 2 minutes"""
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates?limit=10"
+    r = requests.get(url, timeout=10)
+    updates = r.json().get("result", [])
 
-def listen_for_commands():
-    """Listen for /fno command for 55 seconds and respond"""
-    print("Listening for /fno commands for 55 seconds...")
-    seen_ids = set()
+    now = datetime.datetime.utcnow()
+    for update in updates:
+        msg = update.get("message", {})
+        text = msg.get("text", "").strip().lower()
+        chat_id = msg.get("chat", {}).get("id")
+        msg_time = msg.get("date", 0)
+        msg_dt = datetime.datetime.utcfromtimestamp(msg_time)
 
-    # Get current update_id to ignore old messages
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates?limit=5&offset=-5"
-    r = requests.get(url)
-    data = r.json()
-    for item in data.get("result", []):
-        seen_ids.add(item["update_id"])
-
-    start = time.time()
-    while time.time() - start < 55:
-        try:
-            url = f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates?timeout=10"
-            r = requests.get(url, timeout=15)
-            updates = r.json().get("result", [])
-            for update in updates:
-                uid = update["update_id"]
-                if uid in seen_ids:
-                    continue
-                seen_ids.add(uid)
-                text = update.get("message", {}).get("text", "")
-                chat_id = update.get("message", {}).get("chat", {}).get("id")
-                if text.strip().lower() in ["/fno", "/fno@" + BOT_TOKEN.split(":")[0]]:
-                    print(f"Got /fno command from {chat_id}")
-                    send_telegram("⏳ Fetching FnO data, please wait...")
-                    gainers, losers = get_fno_movers()
-                    msg = build_message(gainers, losers)
-                    send_telegram(msg)
-        except:
-            pass
-        time.sleep(3)
+        # Only respond to messages sent in last 2 minutes
+        if text == "/fno" and (now - msg_dt).seconds < 120:
+            print(f"Found /fno command from {chat_id}")
+            send_message(chat_id, "⏳ Fetching FnO data, please wait...")
+            gainers, losers = get_fno_movers()
+            send_message(chat_id, build_message(gainers, losers))
+            return True
+    return False
 
 import sys
 
@@ -144,15 +115,12 @@ if __name__ == "__main__":
     mode = sys.argv[1] if len(sys.argv) > 1 else "scheduled"
 
     if mode == "scheduled":
-        # Auto alert at 9:25 AM
-        if datetime.datetime.today().weekday() < 5:
-            gainers, losers = get_fno_movers()
-            msg = build_message(gainers, losers)
-            send_telegram(msg)
-            print("Scheduled alert sent!")
-        else:
-            print("Weekend — skipping.")
+        print("Running scheduled 9:25 AM alert...")
+        gainers, losers = get_fno_movers()
+        send_message(CHAT_ID, build_message(gainers, losers))
 
     elif mode == "listen":
-        # Listen for /fno commands
-        listen_for_commands()
+        print("Checking for /fno command...")
+        found = check_fno_command()
+        if not found:
+            print("No /fno command found.")
